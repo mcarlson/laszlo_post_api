@@ -1,5 +1,7 @@
 <%@ page import="org.apache.commons.fileupload.*, org.apache.commons.fileupload.servlet.ServletFileUpload, org.apache.commons.fileupload.disk.DiskFileItemFactory, org.apache.commons.io.FilenameUtils, java.util.*, java.io.*, java.lang.Exception, java.util.zip.*" %>
 <%!
+  protected SortedSet dirsMade;
+  static int BUFFERSIZE = 2048;
   // Does this pathname point to a valid target directory? Should be
   // a subdir of the webapp. 
   boolean isValidSubdir(String path) {
@@ -13,7 +15,7 @@
   }
 
   public static final void copyInputStream(InputStream in, OutputStream out) throws IOException {
-    byte[] buffer = new byte[1024];
+    byte[] buffer = new byte[BUFFERSIZE];
     int len;
 
     while((len = in.read(buffer)) >= 0)
@@ -98,30 +100,48 @@ if (ServletFileUpload.isMultipartContent(request)){
         fileItem.write(saveTo);
 
         // unzip the file
-        Enumeration entries;
-        ZipFile zipFile;
-        zipFile = new ZipFile(saveTo);
+        ZipFile zipFile = new ZipFile(saveTo);
 
-        entries = zipFile.entries();
+        Enumeration entries = zipFile.entries();
+        ZipEntry entry;
+
+        BufferedInputStream zipin = null;
+        BufferedOutputStream zipout = null;
+        dirsMade = new TreeSet();
 
         while(entries.hasMoreElements()) {
-          ZipEntry entry = (ZipEntry)entries.nextElement();
-          if (!isValidSubdir(path + entry.getName())) {
+          entry = (ZipEntry)entries.nextElement();
+          String entryname = entry.getName();
+          if (!isValidSubdir(path + entryname)) {
             out.println("Invalid path.");
             return;
           }
 
-          if(entry.isDirectory()) {
-            // Assume directories are stored parents first then children.
-            //out.println("Extracting directory: " + entry.getName());
-            // This is not robust, just for demonstration purposes.
-            (new File(path + entry.getName())).mkdir();
+          if (entryname.startsWith("/")) {
+            entryname = entryname.substring(1);
+          }
+          if (entryname.endsWith("/")) {
             continue;
           }
 
-          //out.println("Extracting file: " + entry.getName());
-          copyInputStream(zipFile.getInputStream(entry),
-          new BufferedOutputStream(new FileOutputStream(path + entry.getName())));
+          int ix = entryname.lastIndexOf('/');
+          if (ix > 0) {
+            String dirName = path + entryname.substring(0, ix);
+            if (!dirsMade.contains(dirName)) {
+              File d = new File(dirName);
+              if (!(d.exists() && d.isDirectory())) {
+                if (!d.mkdirs()) {
+                }
+                dirsMade.add(dirName);
+              }
+            }
+          }
+
+          //System.out.println("Extracting file: " + entryname);
+          zipin = new BufferedInputStream (zipFile.getInputStream(entry));
+          FileOutputStream fos = new FileOutputStream(path + entryname);
+          zipout = new BufferedOutputStream(fos, BUFFERSIZE);
+          copyInputStream(zipin, zipout);
         }
 
         zipFile.close();
